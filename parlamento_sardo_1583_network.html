@@ -81,7 +81,7 @@ function init(nodes,links){
   function fit(){const b=root.node().getBBox();if(!b.width||!b.height)return;const k=Math.min(width/b.width,height/b.height)*.88;svg.transition().duration(500).call(zoom.transform,d3.zoomIdentity.translate(width/2-k*(b.x+b.width/2),height/2-k*(b.y+b.height/2)).scale(k))}
   document.querySelector('#zoomFit').onclick=fit;setTimeout(fit,1800);document.querySelector('#status').remove();
 }
-(async()=>{try{if(SHEET_ID===DEFAULT_SHEET_ID)throw new Error('Inserire l’ID del Google Sheet nella costante DEFAULT_SHEET_ID oppure nell’URL con ?sheet=ID.');const [nodi,connessioni]=await Promise.all([loadSheet('nodi'),loadSheet('Connessioni')]);init(nodi,connessioni)}catch(e){const s=document.querySelector('#status');s.classList.add('error');s.innerHTML=`<b>Configurazione non completata</b><br>${e.message}`}})();
+(async()=>{try{if(!SHEET_ID||SHEET_ID==='INSERISCI_ID_GOOGLE_SHEET')throw new Error('Inserire l’ID del Google Sheet nella costante DEFAULT_SHEET_ID oppure nell’URL con ?sheet=ID.');const [nodi,connessioni]=await Promise.all([loadSheet('nodi'),loadSheet('Connessioni')]);init(nodi,connessioni)}catch(e){const s=document.querySelector('#status');s.classList.add('error');s.innerHTML=`<b>Configurazione non completata</b><br>${e.message}`}})();
 </script>
 </body>
 </html>
