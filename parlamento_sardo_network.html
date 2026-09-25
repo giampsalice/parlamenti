@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Parlamento sardo 1583 — rete di procure e procuratori</title>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <style>
+    :root{--ink:#182235;--muted:#667085;--panel:#fff;--line:#d9dee8;--bg:#f3f1ea;--accent:#9b7630}
+    *{box-sizing:border-box} body{margin:0;font:15px/1.45 Arial,sans-serif;color:var(--ink);background:var(--bg)}
+    header{padding:18px 22px;background:#202d40;color:#fff;display:flex;gap:24px;align-items:center;flex-wrap:wrap}
+    h1{font:600 22px Georgia,serif;margin:0;flex:1}.stats{display:flex;gap:18px}.stats b{color:#f0cf82}
+    main{display:grid;grid-template-columns:300px 1fr;min-height:720px}.controls{padding:18px;background:var(--panel);border-right:1px solid var(--line)}
+    label{display:block;font-weight:700;margin:0 0 6px}.hint{color:var(--muted);font-size:12px;margin:6px 0 20px}
+    input,select{width:100%;padding:10px;border:1px solid #b9c1ce;border-radius:6px;background:#fff;margin-bottom:14px}
+    .legend{display:grid;gap:8px;margin-top:18px}.legend span{display:flex;align-items:center;gap:8px}.dot{width:11px;height:11px;border-radius:50%}
+    #stage{position:relative;overflow:hidden;background:radial-gradient(circle at center,#fff 0,#f8f7f3 58%,#eeece5 100%)}
+    svg{width:100%;height:720px;display:block}.link{stroke:#8c96a5;stroke-opacity:.45}.node{stroke:#fff;stroke-width:1.5px;cursor:pointer}
+    .label{font:11px Arial,sans-serif;fill:#253047;pointer-events:none;text-shadow:0 1px 0 #fff,1px 0 0 #fff,0 -1px 0 #fff,-1px 0 0 #fff}
+    .tooltip{position:absolute;display:none;max-width:320px;padding:10px 12px;background:#162235;color:#fff;border-radius:6px;pointer-events:none;box-shadow:0 8px 24px #0003}
+    .status{position:absolute;inset:0;display:grid;place-items:center;background:#f8f7f3;color:var(--muted);padding:24px;text-align:center;z-index:3}
+    .error{color:#8c1d18}.actions{display:flex;gap:8px}.actions button{flex:1;padding:8px;border:1px solid #abb4c1;background:#fff;border-radius:5px;cursor:pointer}
+    @media(max-width:760px){main{grid-template-columns:1fr}.controls{border-right:0;border-bottom:1px solid var(--line)}svg{height:620px}}
+  </style>
+</head>
+<body>
+  <header><h1>Parlamento sardo — rete di procure e procuratori (1583)</h1><div class="stats"><span>Nodi <b id="nodeCount">—</b></span><span>Connessioni <b id="edgeCount">—</b></span></div></header>
+  <main>
+    <aside class="controls">
+      <label for="search">Cerca una persona o un ente</label><input id="search" type="search" placeholder="Digita un nome…">
+      <label for="group">Gruppo</label><select id="group"><option value="">Tutti i gruppi</option></select>
+      <div class="actions"><button id="zoomFit">Adatta</button><button id="reset">Azzera filtri</button></div>
+      <p class="hint">Trascina i nodi, usa la rotella per lo zoom e seleziona un nodo per evidenziarne le relazioni.</p>
+      <div class="legend" id="legend"></div>
+    </aside>
+    <section id="stage"><div class="status" id="status">Caricamento dati da Google Sheets…</div><svg role="img" aria-label="Rete delle procure e dei procuratori"></svg><div class="tooltip" id="tooltip"></div></section>
+  </main>
+<script>
+const DEFAULT_SHEET_ID = 'INSERISCI_ID_GOOGLE_SHEET';
+const SHEET_ID = new URLSearchParams(location.search).get('sheet') || DEFAULT_SHEET_ID;
+const colors={Root:'#c9a84c',Militare:'#de7d45',Ecclesiastico:'#43a8bb',Reale:'#63b66a',Incarichi:'#b36ab3',Ufficiali:'#a98a57'};
+
+function parseCSV(text){
+  const rows=[];let row=[],cell='',quoted=false;
+  for(let i=0;i<text.length;i++){const c=text[i],n=text[i+1];
+    if(c==='"'&&quoted&&n==='"'){cell+='"';i++;}
+    else if(c==='"'){quoted=!quoted;}
+    else if(c===','&&!quoted){row.push(cell);cell='';}
+    else if((c==='\n'||c==='\r')&&!quoted){if(c==='\r'&&n==='\n')i++;row.push(cell);if(row.some(v=>v!==''))rows.push(row);row=[];cell='';}
+    else cell+=c;
+  }
+  if(cell||row.length){row.push(cell);rows.push(row)}
+  const headers=rows.shift().map(h=>h.trim());
+  return rows.map(r=>Object.fromEntries(headers.map((h,i)=>[h,(r[i]??'').trim()])));
+}
+async function loadSheet(name){
+  const url=`https://docs.google.com/spreadsheets/d/${encodeURIComponent(SHEET_ID)}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(name)}`;
+  const res=await fetch(url);if(!res.ok)throw new Error(`Impossibile leggere il foglio ${name} (${res.status})`);return parseCSV(await res.text());
+}
+function init(nodes,links){
+  nodes=nodes.map(d=>({...d,profondita:+d.profondita||0,grado:+d.grado||0}));
+  links=links.map(d=>({source:d.sorgente,target:d.destinazione,relazione:d.relazione}));
+  const ids=new Set(nodes.map(d=>d.id));links=links.filter(d=>ids.has(d.source)&&ids.has(d.target));
+  document.querySelector('#nodeCount').textContent=nodes.length;document.querySelector('#edgeCount').textContent=links.length;
+  const groups=[...new Set(nodes.map(d=>d.gruppo))].sort();
+  d3.select('#group').selectAll('option.group').data(groups).join('option').attr('class','group').attr('value',d=>d).text(d=>d);
+  d3.select('#legend').selectAll('span').data(groups).join('span').html(d=>`<i class="dot" style="background:${colors[d]||'#7b8798'}"></i>${d}`);
+  const stage=document.querySelector('#stage'),svg=d3.select('svg'),width=stage.clientWidth,height=svg.node().clientHeight;
+  const root=svg.append('g'),zoom=d3.zoom().scaleExtent([.15,5]).on('zoom',e=>root.attr('transform',e.transform));svg.call(zoom);
+  const link=root.append('g').selectAll('line').data(links).join('line').attr('class','link').attr('stroke-width',d=>d.relazione==='gerarchia'?1.1:1.8);
+  const node=root.append('g').selectAll('circle').data(nodes).join('circle').attr('class','node').attr('r',d=>Math.max(4,Math.min(13,4+Math.sqrt(d.grado)*2))).attr('fill',d=>colors[d.gruppo]||'#7b8798');
+  const labels=root.append('g').selectAll('text').data(nodes.filter(d=>d.grado>2||d.profondita<2)).join('text').attr('class','label').text(d=>d.nome).attr('dx',8).attr('dy',4);
+  const sim=d3.forceSimulation(nodes).force('link',d3.forceLink(links).id(d=>d.id).distance(d=>42+Math.min(45,(d.source.grado+d.target.grado)*2)).strength(.45)).force('charge',d3.forceManyBody().strength(d=>-35-Math.min(180,d.grado*8))).force('center',d3.forceCenter(width/2,height/2)).force('collide',d3.forceCollide().radius(d=>8+Math.sqrt(d.grado)*2));
+  sim.on('tick',()=>{link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);node.attr('cx',d=>d.x).attr('cy',d=>d.y);labels.attr('x',d=>d.x).attr('y',d=>d.y)});
+  node.call(d3.drag().on('start',(e,d)=>{if(!e.active)sim.alphaTarget(.25).restart();d.fx=d.x;d.fy=d.y}).on('drag',(e,d)=>{d.fx=e.x;d.fy=e.y}).on('end',(e,d)=>{if(!e.active)sim.alphaTarget(0);d.fx=null;d.fy=null}));
+  const tip=d3.select('#tooltip');node.on('mouseenter',(e,d)=>tip.style('display','block').html(`<b>${d.nome}</b><br>Gruppo: ${d.gruppo}<br>Connessioni: ${d.grado}`)).on('mousemove',e=>tip.style('left',`${e.offsetX+14}px`).style('top',`${e.offsetY+14}px`)).on('mouseleave',()=>tip.style('display','none')).on('click',(e,d)=>highlight(d.id));
+  function highlight(id){const adjacent=new Set([id]);links.forEach(l=>{const s=l.source.id,t=l.target.id;if(s===id)adjacent.add(t);if(t===id)adjacent.add(s)});node.attr('opacity',d=>adjacent.has(d.id)?1:.12);link.attr('opacity',d=>d.source.id===id||d.target.id===id?1:.07);labels.attr('opacity',d=>adjacent.has(d.id)?1:.08)}
+  function filter(){const q=document.querySelector('#search').value.trim().toLowerCase(),g=document.querySelector('#group').value;node.attr('opacity',d=>(!q||d.nome.toLowerCase().includes(q))&&(!g||d.gruppo===g)?1:.08);labels.attr('opacity',d=>(!q||d.nome.toLowerCase().includes(q))&&(!g||d.gruppo===g)?1:.05);link.attr('opacity',.25)}
+  document.querySelector('#search').addEventListener('input',filter);document.querySelector('#group').addEventListener('change',filter);
+  document.querySelector('#reset').onclick=()=>{document.querySelector('#search').value='';document.querySelector('#group').value='';node.attr('opacity',1);link.attr('opacity',1);labels.attr('opacity',1)};
+  function fit(){const b=root.node().getBBox();if(!b.width||!b.height)return;const k=Math.min(width/b.width,height/b.height)*.88;svg.transition().duration(500).call(zoom.transform,d3.zoomIdentity.translate(width/2-k*(b.x+b.width/2),height/2-k*(b.y+b.height/2)).scale(k))}
+  document.querySelector('#zoomFit').onclick=fit;setTimeout(fit,1800);document.querySelector('#status').remove();
+}
+(async()=>{try{if(SHEET_ID===DEFAULT_SHEET_ID)throw new Error('Inserire l’ID del Google Sheet nella costante DEFAULT_SHEET_ID oppure nell’URL con ?sheet=ID.');const [nodi,connessioni]=await Promise.all([loadSheet('nodi'),loadSheet('Connessioni')]);init(nodi,connessioni)}catch(e){const s=document.querySelector('#status');s.classList.add('error');s.innerHTML=`<b>Configurazione non completata</b><br>${e.message}`}})();
+</script>
+</body>
+</html>
